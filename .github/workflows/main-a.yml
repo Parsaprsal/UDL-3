@@ -23,7 +23,7 @@ on:
         type: string
 
 env:
-  CODES_URL: "https://raw.githubusercontent.com/keepfiless/activate/refs/heads/main/checklist/ul.txt"
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   save-file:
@@ -65,6 +65,69 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           echo "Git configured for large file handling"
+
+      - name: Initialize download tracker
+        env:
+          YT_URLS: ${{ github.event.inputs.urls }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          # Create downloadings folder if not exists
+          mkdir -p downloadings
+
+          # Use unique tracking file in downloadings folder
+          TRACKER_FILE="downloadings/downloading_${GITHUB_RUN_ID}.md"
+          echo "Using tracker file: $TRACKER_FILE"
+
+          # Save tracker filename for other steps
+          echo "$TRACKER_FILE" > /tmp/tracker_filename.txt
+          echo "${GITHUB_RUN_ID}" > /tmp/current_run_id.txt
+
+          # Parse URLs
+          read -ra URL_LIST <<< "$YT_URLS"
+
+          # Create tracking files immediately
+          > "$TRACKER_FILE"
+          > "/tmp/url_ids_${GITHUB_RUN_ID}.txt"
+          for url in "${URL_LIST[@]}"; do
+            RANDOM_ID=$(echo "$url$RANDOM$RANDOM$(date +%s%N)" | sha256sum | cut -c1-8)
+            echo "$url|$RANDOM_ID" >> "/tmp/url_ids_${GITHUB_RUN_ID}.txt"
+            echo "\"$url\",\"$RANDOM_ID\"" >> "$TRACKER_FILE"
+          done
+
+          # Configure git
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          # Stash any local changes
+          git stash push -m "temp_setup_${GITHUB_RUN_ID}" || true
+
+          # Pull latest changes with rebase
+          git pull origin $GITHUB_REF_NAME --rebase || true
+
+          # Pop stash
+          git stash pop || true
+
+          # Add downloadings folder and tracking file
+          git add downloadings/
+          git add "$TRACKER_FILE"
+
+          # Commit if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "Start download tracking for run $GITHUB_RUN_ID" || true
+          fi
+
+          # Push with retry
+          for attempt in 1 2 3 4 5; do
+            git pull origin $GITHUB_REF_NAME --rebase || true
+            if git push origin $GITHUB_REF_NAME; then
+              echo "✅ Tracking file created: $TRACKER_FILE with ${#URL_LIST[@]} entries"
+              break
+            else
+              echo "Push failed, attempt $attempt/5, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
 
       - name: Install aria2 and zip
         run: |
@@ -261,6 +324,38 @@ jobs:
             FILENAME=$(echo "$FILENAME" | sed 's/[<>:"|?*]/_/g')
             echo "Downloading $URL -> $FILENAME"
             download_with_retry "$URL" "$FILENAME" || echo "Failed to download: $FILENAME"
+          done
+
+                    # Remove completed entries from tracking file
+          TRACKER_FILE=$(cat /tmp/tracker_filename.txt 2>/dev/null)
+          RUN_ID=$(echo "$TRACKER_FILE" | sed 's/downloadings\/downloading_\(.*\).md/\1/')
+
+          for URL in $URLS; do
+            RANDOM_ID=$(grep "^$URL|" "/tmp/url_ids_${RUN_ID}.txt" 2>/dev/null | cut -d'|' -f2)
+            if [ -n "$RANDOM_ID" ]; then
+              sed -i "\@\"$URL\",\"$RANDOM_ID\"@d" "$TRACKER_FILE"
+              
+              git stash push -m "temp_${RANDOM_ID}" || true
+              git pull origin $GITHUB_REF_NAME --rebase || true
+              git stash pop || true
+              
+              git add downloadings/
+              git add "$TRACKER_FILE"
+              if ! git diff --cached --quiet; then
+                git commit -m "Complete download: $RANDOM_ID for run $RUN_ID" || true
+              fi
+              
+              for attempt in 1 2 3 4 5; do
+                git pull origin $GITHUB_REF_NAME --rebase || true
+                if git push origin $GITHUB_REF_NAME; then
+                  echo "✅ Removed tracking entry for $RANDOM_ID"
+                  break
+                else
+                  echo "Push failed, attempt $attempt/5, retrying in 2 seconds..."
+                  sleep 2
+                fi
+              done
+            fi
           done
 
           if [ "$MODE" = "zip" ]; then
@@ -625,6 +720,38 @@ jobs:
           } >> README.md
 
           echo "README.md updated with download links"
+
+      - name: Cleanup tracker file
+        if: always()
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          TRACKER_FILE="downloadings/downloading_${GITHUB_RUN_ID}.md"
+
+          if [ -f "$TRACKER_FILE" ]; then
+            rm -f "$TRACKER_FILE"
+            
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            
+            git pull origin $GITHUB_REF_NAME --rebase || true
+            git add downloadings/
+            git commit -m "Cleanup: Remove tracker file for run $GITHUB_RUN_ID" || true
+            
+            for attempt in 1 2 3 4 5; do
+              git pull origin $GITHUB_REF_NAME --rebase || true
+              if git push origin $GITHUB_REF_NAME; then
+                echo "✅ Tracker file removed: $TRACKER_FILE"
+                break
+              else
+                echo "Push failed, attempt $attempt/5, retrying in 2 seconds..."
+                sleep 2
+              fi
+            done
+          else
+            echo "⚠️ Tracker file not found: $TRACKER_FILE"
+          fi
 
       - name: Incremental Commit & Push
         run: |
