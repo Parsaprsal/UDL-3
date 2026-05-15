@@ -1,0 +1,308 @@
+name: 02- 📦 دانلود رایگان ( حداکثر ۱۰ مگابایت )
+
+"on":
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: '🔗 لینک های دانلود (با فاصله جدا کنید)'
+        required: true
+        type: string
+      free_notice:
+        description: '⚠️ این نسخه رایگان است فقط فایل های زیر ۱۰ مگابایت را دانلود میکند برای دانلود بالاتر به نسخه اصلی مراجعه کنید'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  save-file:
+    name: "📥 دانلود"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: 🔍 بررسی لینک
+        run: |
+          if [ -z "${{ github.event.inputs.urls }}" ]; then
+            echo "❌ لینک وارد نشده!"
+            exit 1
+          fi
+          echo "✅ لینک دریافت شد"
+
+      - name: 📂 بررسی اولیه
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: ⚙️ تنظیم اولیه
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: 📥 دانلود فایل
+        run: |
+          URLS="${{ github.event.inputs.urls }}"
+          MAX_SIZE_MB=10
+          MAX_SIZE_BYTES=$(( MAX_SIZE_MB * 1024 * 1024 ))
+
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          BRANCH="${GITHUB_REF_NAME}"
+
+          echo "🌐 AVASAM Free (https://avasam.ir)"
+          echo "📏 حداکثر حجم: ${MAX_SIZE_MB}MB"
+          echo ""
+
+          mkdir -p downloads
+
+          urlencode() {
+            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+          }
+
+          create_error_file() {
+            local FILENAME="$1"
+            local ERROR_MSG="$2"
+            local URL="$3"
+            local BASENAME_NO_EXT="${FILENAME%.*}"
+            mkdir -p "downloads/${BASENAME_NO_EXT}"
+            {
+              echo "# ${FILENAME} - ❌ خطا"
+              echo ""
+              echo "| | |"
+              echo "|--|--|"
+              echo "| **فایل** | \`${FILENAME}\` |"
+              echo "| **لینک** | ${URL} |"
+              echo "| **تاریخ** | $(date '+%Y-%m-%d %H:%M:%S UTC') |"
+              echo ""
+              echo "## خطا"
+              echo "\`\`\`"
+              echo "$ERROR_MSG"
+              echo "\`\`\`"
+              echo ""
+              echo "---"
+              echo "*[avasam.ir](https://avasam.ir)*"
+            } > "downloads/${BASENAME_NO_EXT}/README.md"
+          }
+
+          create_size_error_file() {
+            local FILENAME="$1"
+            local FILE_SIZE_MB="$2"
+            local URL="$3"
+            local BASENAME_NO_EXT="${FILENAME%.*}"
+            mkdir -p "downloads/${BASENAME_NO_EXT}"
+            {
+              echo "# ${FILENAME} - ❌ حجم زیاد"
+              echo ""
+              echo "| | |"
+              echo "|--|--|"
+              echo "| **فایل** | \`${FILENAME}\` |"
+              echo "| **حجم** | ${FILE_SIZE_MB} MB |"
+              echo "| **حداکثر** | ${MAX_SIZE_MB} MB |"
+              echo ""
+              echo "⚠️ نسخه رایگان فقط فایل زیر ${MAX_SIZE_MB}MB"
+              echo ""
+              echo "---"
+              echo "*[avasam.ir](https://avasam.ir)*"
+            } > "downloads/${BASENAME_NO_EXT}/README.md"
+          }
+
+          download_file() {
+            local URL="$1"
+            local FILENAME="$2"
+            local MAX_RETRIES=3
+            local RETRY_DELAY=5
+            local SUCCESS=false
+            local ERROR_LOG=""
+
+            echo "📏 بررسی حجم..."
+            FILE_SIZE=$(curl -sI -L "$URL" | grep -i content-length | tail -1 | awk '{print $2}' | tr -d '\r')
+
+            if [ -n "$FILE_SIZE" ] && [ "$FILE_SIZE" -gt "$MAX_SIZE_BYTES" ] 2>/dev/null; then
+              FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE / 1024 / 1024" | bc)
+              echo "❌ حجم زیاد: ${FILE_SIZE_MB}MB"
+              create_size_error_file "$FILENAME" "$FILE_SIZE_MB" "$URL"
+              return 1
+            fi
+
+            for ((attempt=1; attempt<=MAX_RETRIES; attempt++)); do
+              echo "🔄 تلاش $attempt از $MAX_RETRIES"
+
+              rm -f "downloads/$FILENAME"
+
+              ERROR_LOG=$(curl -L -f -# \
+                --retry 3 \
+                --retry-delay 5 \
+                --connect-timeout 30 \
+                --max-time 600 \
+                -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+                -o "downloads/$FILENAME" \
+                "$URL" 2>&1)
+
+              if [ -f "downloads/$FILENAME" ] && [ -s "downloads/$FILENAME" ]; then
+                local DOWNLOADED_SIZE=$(stat -c%s "downloads/$FILENAME" 2>/dev/null || echo "0")
+
+                if [ "$DOWNLOADED_SIZE" -gt "$MAX_SIZE_BYTES" ]; then
+                  DOWNLOADED_SIZE_MB=$(echo "scale=2; $DOWNLOADED_SIZE / 1024 / 1024" | bc)
+                  echo "❌ حجم زیاد: ${DOWNLOADED_SIZE_MB}MB"
+                  rm -f "downloads/$FILENAME"
+                  create_size_error_file "$FILENAME" "$DOWNLOADED_SIZE_MB" "$URL"
+                  return 1
+                fi
+
+                if [ "$DOWNLOADED_SIZE" -gt 0 ]; then
+                  SUCCESS=true
+                  echo "✅ دانلود شد: $FILENAME"
+                  break
+                fi
+              fi
+
+              rm -f "downloads/$FILENAME"
+              sleep $RETRY_DELAY
+              RETRY_DELAY=$((RETRY_DELAY * 2))
+            done
+
+            if [ "$SUCCESS" = true ]; then
+              return 0
+            fi
+
+            create_error_file "$FILENAME" "$ERROR_LOG" "$URL"
+            return 1
+          }
+
+          for URL in $URLS; do
+            FILENAME=$(basename "$URL" | sed 's/%20/ /g' | sed 's/%2F/-/g' | sed 's/[?#].*//')
+            FILENAME=$(echo "$FILENAME" | sed 's/[<>:"|?*]/_/g')
+            echo ""
+            echo "📥 $FILENAME"
+
+            if download_file "$URL" "$FILENAME"; then
+              BASENAME_NO_EXT="${FILENAME%.*}"
+              mkdir -p "downloads/${BASENAME_NO_EXT}"
+              mv "downloads/$FILENAME" "downloads/${BASENAME_NO_EXT}/"
+
+              FILE_SIZE=$(stat -c%s "downloads/${BASENAME_NO_EXT}/$FILENAME" 2>/dev/null || echo "0")
+              FILE_SIZE_MB=$(echo "scale=2; $FILE_SIZE / 1024 / 1024" | bc)
+
+              FOLDER_ENCODED=$(urlencode "${BASENAME_NO_EXT}")
+              FILE_ENCODED=$(urlencode "${FILENAME}")
+              RAW_LINK="https://github.com/${REPO_OWNER}/${REPO_NAME}/raw/${BRANCH}/downloads/${FOLDER_ENCODED}/${FILE_ENCODED}"
+
+              {
+                echo "# ${BASENAME_NO_EXT}"
+                echo ""
+                echo "| | |"
+                echo "|--|--|"
+                echo "| **فایل** | \`${FILENAME}\` |"
+                echo "| **حجم** | ${FILE_SIZE_MB} MB |"
+                echo "| **وضعیت** | ✅ کامل |"
+                echo ""
+                echo "## 📥 دانلود"
+                echo "[دانلود فایل](${RAW_LINK})"
+                echo ""
+                echo "---"
+                echo "*[avasam.ir](https://avasam.ir)*"
+              } > "downloads/${BASENAME_NO_EXT}/README.md"
+
+              echo "✅ $FILENAME"
+            else
+              echo "❌ $FILENAME"
+            fi
+          done
+
+      - name: 📝 بروزرسانی README
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          BRANCH="${GITHUB_REF_NAME}"
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }}/downloads"
+
+          FOLDERS=$(find downloads -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort)
+
+          if [ -z "$FOLDERS" ]; then
+            echo "📭 فایلی نیست"
+            exit 0
+          fi
+
+          urlencode() {
+            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"
+          }
+
+          {
+            echo "# 📦 فایل‌ها"
+            echo ""
+            echo "$FOLDERS" | while read -r FOLDER; do
+              if [ -n "$FOLDER" ]; then
+                FOLDER_ENCODED=$(urlencode "${FOLDER}")
+                echo "- [${FOLDER}](./${FOLDER_ENCODED})"
+              fi
+            done
+            echo ""
+            echo "---"
+            echo "*[avasam.ir](https://avasam.ir)*"
+          } > "downloads/README.md"
+
+          SECTION_TITLE="📦 فایل‌ها"
+
+          if [ ! -f "README.md" ]; then
+            echo "# AVASAM Free" > README.md
+            echo "https://avasam.ir" >> README.md
+            echo "" >> README.md
+          fi
+
+          if grep -q "$SECTION_TITLE" README.md; then
+            sed -i "/$SECTION_TITLE/,/^---$/d" README.md
+            sed -i '${/^$/d;}' README.md
+          fi
+
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## $SECTION_TITLE"
+            echo ""
+            COUNTER=1
+            echo "$FOLDERS" | while read -r FOLDER; do
+              if [ -n "$FOLDER" ]; then
+                FOLDER_ENCODED=$(urlencode "${FOLDER}")
+                echo "${COUNTER}. [$FOLDER]($REPO_URL/$FOLDER_ENCODED)"
+                COUNTER=$((COUNTER + 1))
+              fi
+            done
+            echo ""
+            echo "---"
+          } >> README.md
+
+      - name: 🚀 ذخیره
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+
+          git add -f downloads/
+          git add README.md
+
+          if ! git diff --cached --quiet; then
+            git commit -m "📥 [skip ci]"
+
+            PUSH_RETRY=0
+            while [ $PUSH_RETRY -lt 5 ]; do
+              PUSH_RETRY=$((PUSH_RETRY + 1))
+              if git push origin HEAD:"$BRANCH"; then
+                echo "✅ ذخیره شد"
+                break
+              else
+                echo "🔄 تلاش $PUSH_RETRY/5..."
+                sleep 3
+                git fetch origin "$BRANCH"
+                git rebase origin/"$BRANCH"
+                git add -f downloads/
+                git add README.md
+                if ! git diff --cached --quiet; then
+                  git commit -m "📥 [skip ci]"
+                fi
+              fi
+            done
+          else
+            echo "📭 تغییری نیست"
+          fi
+
+          echo "✅ تمام"
