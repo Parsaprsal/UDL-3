@@ -1,5 +1,5 @@
 ---
-name: 🔥 01- Down load URL
+name: 01- 🔥 دانلود فایل ( نسخه کامل )
 
 on:
   workflow_dispatch:
@@ -32,6 +32,7 @@ env:
 
 jobs:
   check-activation:
+    name: "🔍 بررسی فعالسازی"
     runs-on: ubuntu-latest
     outputs:
       is_activated: ${{ steps.check.outputs.is_activated }}
@@ -46,7 +47,7 @@ jobs:
           path: .activation-status
           key: activation-status-${{ github.repository }}
 
-      - name: بررسی وضعیت کد فعالسازی
+      - name: Check activation status
         id: check
         run: |
           echo "========================================"
@@ -70,6 +71,7 @@ jobs:
           echo "========================================"
 
   activate:
+    name: "🔐 فعالسازی با کد"
     needs: check-activation
     if: needs.check-activation.outputs.is_activated == 'false' && github.event.inputs.activation_code != ''
     runs-on: ubuntu-latest
@@ -169,7 +171,7 @@ jobs:
             echo "ℹ️ راهنمای خرید قبلاً در README موجود است"
           fi
 
-      - name: بررسی کد فعالسازی
+      - name: Fail on invalid code
         if: steps.validate.outputs.valid != 'true'
         run: |
           echo ""
@@ -180,6 +182,34 @@ jobs:
           echo "📌 برای دریافت کد فعالسازی معتبر:"
           echo "   https://pay.avasam.ir/link/769584"
           echo ""
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          <div align="center">
+          <img src="https://raw.githubusercontent.com/nikzad-avasam/notifications/refs/heads/main/assets/invalid-key.gif" alt="Invalid Key" width="250" />
+
+          # خطا در فعالسازی
+          </div>
+
+          ---
+
+          <div dir="rtl">
+
+          شما کلید فعالساز وارد نکرده یا کلید وارد شده اشتباه است به همین علت امکان استفاده از این پروژه برای شما وجود ندارد.
+
+          برای خرید کلید فعالسازی به لینک پایین مراجعه کنید.
+
+          **نکات :**
+          - کلید دائمی است.
+          - وارد کردن کلید فعالسازی فقط یکبار کافی است. دفعات بعدی نیاز نیست.
+          - در صورت بروز هرگونه مشکل در پیام رسان بله به ایدی @ask_here پیام دهید.
+
+          **لینک خرید کلید فعالسازی :**
+
+          [https://pay.avasam.ir/link/769584](https://pay.avasam.ir/link/769584)
+
+          </div>
+          EOF
+
           exit 1
 
       - name: Save activation to cache
@@ -214,6 +244,7 @@ jobs:
           echo "========================================"
 
   not-activated:
+    name: "⚠️ نیاز به فعالسازی"
     needs: check-activation
     if: needs.check-activation.outputs.is_activated == 'false' && github.event.inputs.activation_code == ''
     runs-on: ubuntu-latest
@@ -277,9 +308,38 @@ jobs:
           echo "      و کد را در فیلد 'کد فعالسازی' وارد کنید"
           echo ""
           echo "========================================"
+
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          <div align="center">
+          <img src="https://raw.githubusercontent.com/nikzad-avasam/notifications/refs/heads/main/assets/invalid-key.gif" alt="Invalid Key" width="250" />
+
+          # خطا در فعالسازی
+          </div>
+
+          ---
+
+          <div dir="rtl">
+
+          شما کلید فعالساز وارد نکرده یا کلید وارد شده اشتباه است به همین علت امکان استفاده از این پروژه برای شما وجود ندارد.
+
+          برای خرید کلید فعالسازی به لینک پایین مراجعه کنید.
+
+          **نکات :**
+          - کلید دائمی است.
+          - وارد کردن کلید فعالسازی فقط یکبار کافی است. دفعات بعدی نیاز نیست.
+          - در صورت بروز هرگونه مشکل در پیام رسان بله به ایدی @ask_here پیام دهید.
+
+          **لینک خرید کلید فعالسازی :**
+
+          [https://pay.avasam.ir/link/769584](https://pay.avasam.ir/link/769584)
+
+          </div>
+          EOF
+
           exit 1
 
   save-file:
+    name: "📥 دانلود فایل"
     needs: [check-activation, activate]
     if: always() && !cancelled() && (needs.check-activation.outputs.is_activated == 'true' || needs.activate.outputs.just_activated == 'true')
     runs-on: ubuntu-latest
@@ -337,7 +397,7 @@ jobs:
           URLS="${{ github.event.inputs.urls }}"
           ZIP_PASSWORD="${{ github.event.inputs.password }}"
 
-          SPLIT_THRESHOLD_MB=45
+          SPLIT_THRESHOLD_MB=95
           SPLIT_THRESHOLD_BYTES=$(( SPLIT_THRESHOLD_MB * 1024 * 1024 ))
 
           REPO_OWNER="${{ github.repository_owner }}"
@@ -673,7 +733,7 @@ jobs:
 
                 DOWNLOAD_LINKS_MD=""
                 LINK_NUM=0
-                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort); do
+                for part_file in $(ls "$BACKUP_DIR/${FOLDER_NAME}/"*.zip "$BACKUP_DIR/${FOLDER_NAME}/"*.z[0-9]* 2>/dev/null | sort -V); do
                   if [ -f "$part_file" ]; then
                     PART_BASENAME=$(basename "$part_file")
                     PART_ENCODED=$(urlencode "${PART_BASENAME}")
@@ -967,7 +1027,7 @@ jobs:
                   local PUSH_SUCCESS=false
                   while [ $PUSH_RETRY -lt 5 ]; do
                     PUSH_RETRY=$((PUSH_RETRY + 1))
-                    if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                    if timeout 300 git push origin HEAD:"$BRANCH" 2>&1; then
                       PUSH_SUCCESS=true
                       echo "    Batch pushed successfully!"
                       break
@@ -994,7 +1054,7 @@ jobs:
 
                 BATCH_FILES=()
                 BATCH_COUNT=0
-                sleep 2
+                sleep 1
               fi
             done
 
@@ -1018,7 +1078,7 @@ jobs:
                 local PUSH_RETRY=0
                 while [ $PUSH_RETRY -lt 5 ]; do
                   PUSH_RETRY=$((PUSH_RETRY + 1))
-                  if timeout 180 git push origin HEAD:"$BRANCH" 2>&1; then
+                  if timeout 300 git push origin HEAD:"$BRANCH" 2>&1; then
                     echo "    Final batch pushed successfully!"
                     break
                   else
@@ -1060,7 +1120,7 @@ jobs:
 
           while IFS= read -r -d '' FILE; do
             ALL_FILES+=("$FILE")
-          done < <(find downloads -type f \( -name "*.zip" -o -name "*.z[0-9][0-9]" -o -name "*.z[0-9]" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" -o -name "*.exe" -o -name "*.iso" -o -name "*.tar*" -o -name "*.rar" \) -print0 2>/dev/null | sort -z)
+          done < <(find downloads -type f \( -name "*.zip" -o -name "*.z[0-9][0-9][0-9]" -o -name "*.z[0-9][0-9]" -o -name "*.z[0-9]" -o -name "*.mp4" -o -name "*.mp3" -o -name "*.m4a" -o -name "*.exe" -o -name "*.iso" -o -name "*.tar*" -o -name "*.rar" \) -print0 2>/dev/null | sort -zV)
 
           TOTAL_FILES=${#ALL_FILES[@]}
           echo "Found $TOTAL_FILES files to push"
@@ -1087,7 +1147,7 @@ jobs:
           echo "Total size: ${TOTAL_SIZE_MB}MB"
           echo ""
 
-          if [ $TOTAL_SIZE_MB -lt 100 ]; then
+          if [ $TOTAL_SIZE_MB -lt 200 ]; then
             echo "Small upload - pushing all at once..."
 
             git add -f -A downloads/

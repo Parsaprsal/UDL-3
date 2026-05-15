@@ -1,5 +1,5 @@
 ---
-name: 🗑 3-Clean downloads folder
+name: 04- 🗑 حذف تمام دانلودها
 
 on:
   workflow_dispatch:
